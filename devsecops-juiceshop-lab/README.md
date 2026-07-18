@@ -31,22 +31,22 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    GitHub Actions Pipeline                       │
-│                                                                  │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │
-│  │  Secret  │  │   SAST   │  │   Deps   │  │  Container   │   │
-│  │  Scan    │  │ Semgrep  │  │  OWASP   │  │    Trivy     │   │
-│  │TruffleHog│  │  CodeQL  │  │   DC +   │  │              │   │
-│  │ GitLeaks │  │          │  │ npm audit│  │              │   │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └──────┬───────┘   │
-│       │              │              │                │           │
+│                    GitHub Actions Pipeline                      │
+│                                                                 │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────┐     │
+│  │  Secret  │  │   SAST   │  │   Deps   │  │  Container   │     │
+│  │  Scan    │  │ Semgrep  │  │  OWASP   │  │    Trivy     │     │
+│  │TruffleHog│  │  CodeQL  │  │   DC +   │  │              │     │
+│  │ GitLeaks │  │          │  │ npm audit│  │              │     │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └──────┬───────┘     │
+│       │              │              │                │          │
 │       └──────────────┴──────────────┴────────────────┘          │
-│                              │                                   │
+│                              │                                  │
 │                    ┌─────────▼─────────┐                        │
 │                    │   Security Gate   │  ← FAIL on HIGH/CRIT   │
 │                    │   gate-check.py   │                        │
 │                    └─────────┬─────────┘                        │
-│                    PASS only │                                   │
+│                    PASS only │                                  │
 │                    ┌─────────▼─────────┐                        │
 │                    │   DAST — ZAP      │                        │
 │                    │  (live Juice Shop)│                        │
