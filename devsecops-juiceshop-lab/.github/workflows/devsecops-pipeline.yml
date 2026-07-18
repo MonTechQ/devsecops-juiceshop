@@ -1,0 +1,404 @@
+name: 🔒 DevSecOps Security Pipeline
+
+on:
+  push:
+    branches: ["main", "develop", "fix/**"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      fail_on_severity:
+        description: "Minimum severity that fails the build"
+        required: true
+        default: "HIGH"
+        type: choice
+        options: [CRITICAL, HIGH, MEDIUM, LOW]
+
+env:
+  FAIL_ON_SEVERITY: ${{ github.event.inputs.fail_on_severity || 'HIGH' }}
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/juice-shop-hardened
+  IMAGE_TAG: ${{ github.sha }}
+  NODE_VERSION: "18"
+
+permissions:
+  contents: read
+  security-events: write   # CodeQL + SARIF upload
+  packages: write           # GHCR push
+
+# ─────────────────────────────────────────────────────────────────────
+# STAGE 1 — SECRET SCANNING
+# Runs first — secrets in code are an immediate stopper
+# ─────────────────────────────────────────────────────────────────────
+jobs:
+  secret-scan-trufflehog:
+    name: "🔍 Secrets — TruffleHog (verified)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for secret scanning)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog OSS — scan for verified secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.before || '' }}
+          head: HEAD
+          extra_args: >
+            --only-verified
+            --json
+            --no-update
+        continue-on-error: false  # Hard fail on verified secrets
+
+      - name: Upload TruffleHog results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trufflehog-results
+          path: "*.json"
+          if-no-files-found: ignore
+
+  secret-scan-gitleaks:
+    name: "🔍 Secrets — GitLeaks (pattern-based)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: GitLeaks scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_ENABLE_SUMMARY: true
+
+# ─────────────────────────────────────────────────────────────────────
+# STAGE 2 — STATIC APPLICATION SECURITY TESTING (SAST)
+# ─────────────────────────────────────────────────────────────────────
+  sast-semgrep:
+    name: "🔬 SAST — Semgrep"
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Semgrep — OWASP Top 10 + custom rules
+        run: |
+          semgrep scan \
+            --config "p/owasp-top-ten" \
+            --config "p/javascript" \
+            --config "p/nodejs" \
+            --config "p/secrets" \
+            --config "./scanning/semgrep/custom-rules.yml" \
+            --severity ERROR \
+            --error \
+            --json \
+            --output semgrep-results.json \
+            --no-rewrite-rule-ids \
+            .
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Semgrep SARIF upload
+        if: always()
+        run: |
+          semgrep scan \
+            --config "p/owasp-top-ten" \
+            --config "./scanning/semgrep/custom-rules.yml" \
+            --sarif \
+            --output semgrep.sarif \
+            . || true
+
+      - name: Upload SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+      - name: Upload Semgrep JSON results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-results
+          path: semgrep-results.json
+
+  sast-codeql:
+    name: "🔬 SAST — CodeQL (deep data-flow)"
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: +security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: codeql
+          output: codeql-results.sarif
+
+# ─────────────────────────────────────────────────────────────────────
+# STAGE 3 — DEPENDENCY / SCA SCANNING
+# ─────────────────────────────────────────────────────────────────────
+  dependency-scan:
+    name: "📦 SCA — OWASP DC + npm audit"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --audit=false
+
+      - name: npm audit (High+)
+        run: |
+          npm audit \
+            --audit-level=high \
+            --json > npm-audit.json || true
+
+      - name: OWASP Dependency Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: "juice-shop-devsecops"
+          path: "."
+          format: "JSON"
+          out: "dependency-check-report"
+          args: >
+            --failOnCVSS 7
+            --enableRetired
+            --enableExperimental
+            --prettyPrint
+
+      - name: Upload dependency results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-results
+          path: |
+            npm-audit.json
+            dependency-check-report/
+
+# ─────────────────────────────────────────────────────────────────────
+# STAGE 4 — CONTAINER SCANNING
+# ─────────────────────────────────────────────────────────────────────
+  container-scan:
+    name: "🐳 Container — Trivy (CVE + misconfig)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+            -f Dockerfile \
+            .
+
+      - name: Trivy — vulnerability scan (JSON)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+          format: "json"
+          output: "trivy-results.json"
+          severity: "CRITICAL,HIGH"
+          vuln-type: "os,library"
+          ignore-unfixed: false
+          exit-code: "0"  # Don't fail here — let gate-check.py decide
+
+      - name: Trivy — misconfiguration scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "config"
+          scan-ref: "."
+          format: "json"
+          output: "trivy-misconfig.json"
+          exit-code: "0"
+
+      - name: Trivy SARIF upload
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+          format: "sarif"
+          output: "trivy.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
+
+      - name: Upload Trivy results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-results
+          path: |
+            trivy-results.json
+            trivy-misconfig.json
+
+# ─────────────────────────────────────────────────────────────────────
+# SECURITY GATE — Aggregate all results; fail on HIGH/CRITICAL
+# This is the enforcement point. Build stops here if gates fail.
+# ─────────────────────────────────────────────────────────────────────
+  security-gate:
+    name: "🚦 Security Gate — Fail on ${{ github.event.inputs.fail_on_severity || 'HIGH' }}+"
+    runs-on: ubuntu-latest
+    needs:
+      - secret-scan-trufflehog
+      - secret-scan-gitleaks
+      - sast-semgrep
+      - dependency-scan
+      - container-scan
+    if: always()
+    outputs:
+      gate_status: ${{ steps.gate.outputs.status }}
+      finding_count: ${{ steps.gate.outputs.finding_count }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download all scan artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: scan-artifacts/
+
+      - name: List downloaded artifacts
+        run: find scan-artifacts/ -type f | sort
+
+      - name: Run Security Gate Check
+        id: gate
+        run: |
+          python3 scripts/gate-check.py \
+            --severity "${{ env.FAIL_ON_SEVERITY }}" \
+            --artifacts-dir scan-artifacts/ \
+            --output gate-report.md
+        env:
+          GITHUB_STEP_SUMMARY: $GITHUB_STEP_SUMMARY
+
+      - name: Append gate report to Job Summary
+        if: always()
+        run: |
+          echo "## 🚦 Security Gate Summary" >> $GITHUB_STEP_SUMMARY
+          cat gate-report.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-report
+          path: gate-report.md
+
+# ─────────────────────────────────────────────────────────────────────
+# STAGE 5 — DAST (only runs if gate passes)
+# ─────────────────────────────────────────────────────────────────────
+  dast-zap:
+    name: "🕷️ DAST — OWASP ZAP Baseline Scan"
+    runs-on: ubuntu-latest
+    needs: [security-gate]
+    if: needs.security-gate.outputs.gate_status == 'PASS'
+
+    services:
+      juice-shop:
+        image: bkimminich/juice-shop:latest
+        ports:
+          - 3000:3000
+        options: >-
+          --health-cmd "curl -sf http://localhost:3000 || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wait for Juice Shop to be ready
+        run: |
+          echo "Waiting for Juice Shop..."
+          timeout 60 bash -c 'until curl -sf http://localhost:3000; do sleep 3; done'
+          echo "Juice Shop is up!"
+
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: "http://localhost:3000"
+          rules_file_name: "scanning/zap/zap-rules.tsv"
+          cmd_options: "-a -j"
+          allow_issue_writing: false
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: |
+            report_html.html
+            report_json.json
+            report_md.md
+
+# ─────────────────────────────────────────────────────────────────────
+# STAGE 6 — CONSOLIDATED SECURITY REPORT
+# ─────────────────────────────────────────────────────────────────────
+  generate-report:
+    name: "📊 Generate Consolidated Security Report"
+    runs-on: ubuntu-latest
+    needs: [security-gate, dast-zap]
+    if: always()
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts/
+
+      - name: Generate consolidated report
+        run: |
+          python3 scripts/parse-results.py \
+            --artifacts-dir all-artifacts/ \
+            --output security-report.md \
+            --commit "${{ github.sha }}" \
+            --branch "${{ github.ref_name }}"
+
+      - name: Append to Job Summary
+        if: always()
+        run: |
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "## 📊 Consolidated Security Report" >> $GITHUB_STEP_SUMMARY
+          cat security-report.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload consolidated report
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report-${{ github.sha }}
+          path: security-report.md
+          retention-days: 90

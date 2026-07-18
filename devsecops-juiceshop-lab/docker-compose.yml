@@ -1,0 +1,110 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────
+# DevSecOps Lab Stack
+# Includes: Juice Shop + NGINX reverse proxy (with security headers)
+#
+# Usage:
+#   make start            → start all services
+#   make stop             → stop all services
+#   make scan-all         → run full pipeline locally
+# ─────────────────────────────────────────────────────────────────────
+
+networks:
+  lab-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  scan-results:
+
+services:
+  # ── OWASP Juice Shop (intentionally vulnerable target) ──────────
+  juice-shop:
+    image: bkimminich/juice-shop:latest
+    container_name: juice-shop
+    restart: unless-stopped
+    networks:
+      - lab-network
+    ports:
+      - "3000:3000"        # Direct access for DAST scanning
+    environment:
+      - NODE_ENV=production
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    labels:
+      - "security.role=target"
+      - "security.type=intentionally-vulnerable"
+
+  # ── Hardened Juice Shop (post-remediation) ──────────────────────
+  juice-shop-hardened:
+    build:
+      context: .
+      dockerfile: Dockerfile.hardened
+    container_name: juice-shop-hardened
+    restart: unless-stopped
+    networks:
+      - lab-network
+    ports:
+      - "3001:3000"
+    profiles:
+      - hardened             # Only starts with: docker-compose --profile hardened up
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000',r=>r.statusCode===200?process.exit(0):process.exit(1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    labels:
+      - "security.role=target"
+      - "security.type=hardened"
+
+  # ── NGINX Reverse Proxy (demonstrates security headers) ─────────
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: lab-nginx
+    restart: unless-stopped
+    networks:
+      - lab-network
+    ports:
+      - "8080:80"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      juice-shop:
+        condition: service_healthy
+    labels:
+      - "security.role=proxy"
+    profiles:
+      - proxy
+
+  # ── Scan Results Volume (shared between scan containers) ─────────
+  trivy-scan:
+    image: aquasec/trivy:latest
+    container_name: trivy-scan
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - scan-results:/results
+    command: >
+      image
+      --format json
+      --output /results/trivy-results.json
+      --severity CRITICAL,HIGH
+      bkimminich/juice-shop:latest
+    profiles:
+      - scan           # Only runs with: docker-compose --profile scan up
+    labels:
+      - "security.role=scanner"

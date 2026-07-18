@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+.npm/
+
+# Scan results (time-stamped runs — don't commit)
+scan-results/
+
+# Environment secrets — NEVER commit these
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Docker artifacts
+*.tar
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Build artifacts
+dist/
+build/
+
+# Temporary ZAP report files
+report_html.html
+report_json.json
+report_md.md
+zap*.html
+
+# Semgrep cache
+.semgrep/
+
+# ── Keep these (committed scan configs and example reports) ─────────
+!scanning/semgrep/custom-rules.yml
+!scanning/semgrep/.semgrepignore
+!scanning/zap/zap-rules.tsv
+!scanning/trivy/.trivyignore
+!.gitleaks.toml

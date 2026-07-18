@@ -1,0 +1,16 @@
+# .trivyignore — Accepted Risk Exceptions
+# Each suppressed CVE must include: justification, owner, expiry
+#
+# Format: CVE-ID  # [RISK-ACCEPTED | NOT-APPLICABLE] — reason — owner — expiry
+
+# ─────────────────────────────────────────────────────────────────────
+# CURRENTLY NO ACCEPTED RISKS
+# All findings in the base image (Dockerfile) are flagged and tracked
+# in pentesting/findings/juice-shop-assessment.md
+#
+# After remediation (Dockerfile.hardened), this file should remain
+# empty — all CVEs were resolved by moving to Alpine + dependency updates.
+#
+# Template for future exceptions:
+# CVE-2024-XXXXX  # NOT-APPLICABLE — only affects feature X not used — owner@domain — 2025-12-31
+# ─────────────────────────────────────────────────────────────────────

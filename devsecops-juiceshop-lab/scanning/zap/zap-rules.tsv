@@ -1,0 +1,43 @@
+# ZAP Passive Scan Rule Configuration
+# Format: Rule_ID	Action	Parameter
+# Actions: IGNORE, WARN, FAIL
+#
+# Rule reference: https://www.zaproxy.org/docs/alerts/
+# This config is tuned for the Juice Shop lab environment.
+# In production, all IGNORE rules should be revisited.
+
+# ─── PASS-THROUGH (known intentional vulns in lab target) ───────────
+# These are documented in juice-shop-assessment.md and IGNORED
+# here to prevent noise in DAST gate output.
+# In a real engagement, these would be FAIL.
+
+10010	IGNORE	# Cookie set without Secure flag (lab: HTTP only)
+10011	IGNORE	# Cookie set without HttpOnly flag (intended for lab demo)
+10015	WARN	# Incomplete or No Cache-control and Pragma HTTP header
+10020	WARN	# X-Frame-Options header missing
+10021	WARN	# X-Content-Type-Options header missing
+10035	WARN	# Strict-Transport-Security header missing (HTTP lab)
+10036	WARN	# HTTP server response header
+10038	WARN	# Content Security Policy header missing
+10063	WARN	# Permissions Policy header missing
+
+# ─── FAIL IMMEDIATELY (critical findings, not expected) ─────────────
+10045	FAIL	# Source code disclosure — not expected
+10048	FAIL	# Remote code execution — not expected
+10054	FAIL	# Cookie poisoning
+10095	FAIL	# Backup file disclosure
+40009	FAIL	# Server-side request forgery (SSRF) confirmation
+
+# ─── WARN (report but do not block gate) ────────────────────────────
+10040	WARN	# Secure pages include mixed content
+10104	WARN	# User controllable HTML element attribute
+10105	WARN	# Weak authentication method
+10202	WARN	# Absence of anti-CSRF tokens (documented in F-07)
+3	WARN	# Viewstate without MAC
+10094	WARN	# Base64 disclosure
+10096	WARN	# Timestamp disclosure
+40003	WARN	# CRLF injection
+40012	WARN	# Cross-site scripting reflected (already in findings)
+40014	WARN	# Cross-site scripting persistent (already in findings)
+40016	WARN	# Cross-site scripting (DOM)
+40019	WARN	# External redirect

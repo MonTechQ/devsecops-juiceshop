@@ -1,0 +1,27 @@
+# .semgrepignore — Files/directories to exclude from Semgrep SAST
+# Syntax: same as .gitignore
+
+# Build output
+dist/
+build/
+.angular/
+
+# Dependencies (scanned separately by SCA tools)
+node_modules/
+
+# Test fixtures — intentionally use "bad" patterns for test coverage
+test/
+tests/
+__tests__/
+*.spec.js
+*.test.js
+
+# Third-party vendor code (not our responsibility)
+frontend/dist/
+bower_components/
+
+# Minified files (false positives, unreadable anyway)
+*.min.js
+
+# Coverage reports
+coverage/

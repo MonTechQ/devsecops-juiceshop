@@ -1,0 +1,70 @@
+# .gitleaks.toml — GitLeaks Secret Detection Configuration
+# Docs: https://github.com/gitleaks/gitleaks
+
+title = "DevSecOps Lab — GitLeaks Config"
+
+# ─── Use all default rules ────────────────────────────────────────────
+[extend]
+useDefault = true
+
+# ─── Custom rules for this project ───────────────────────────────────
+
+[[rules]]
+id          = "juice-shop-jwt-secret"
+description = "Juice Shop JWT secret hardcoded"
+regex       = '''(?i)(jwt[_\-]?secret|jwtSecret)\s*[=:]\s*['\"]([a-zA-Z0-9!@#$%^&*]{6,})['\"]'''
+severity    = "critical"
+tags        = ["jwt", "secret", "hardcoded"]
+
+[[rules]]
+id          = "node-env-secret"
+description = "Hardcoded Node.js application secret"
+regex       = '''(?i)(app[_\-]?secret|session[_\-]?secret|cookie[_\-]?secret)\s*[=:]\s*['\"]([^'"]{8,})['\"]'''
+severity    = "high"
+tags        = ["nodejs", "secret", "session"]
+
+[[rules]]
+id          = "generic-api-key-in-js"
+description = "Generic API key pattern in JavaScript"
+regex       = '''(?i)(?:api[_\-]?key|apikey|api[_\-]?token)\s*[=:]\s*['\"]([a-zA-Z0-9_\-]{20,})['\"]'''
+severity    = "high"
+tags        = ["api-key", "javascript"]
+
+[[rules]]
+id          = "database-connection-string"
+description = "Database connection string with embedded credentials"
+regex       = '''(?i)(postgres|mysql|mongodb|sqlite):\/\/([^:]+):([^@]+)@[^'\"]+'''
+severity    = "critical"
+tags        = ["database", "credentials"]
+
+# ─── Allowlist (intentional false-positive suppressions) ──────────────
+[allowlist]
+description = "Global allowlist — test/example values only"
+commits     = []
+paths       = [
+  # Test fixtures and mock data — these are intentionally fake
+  '''(^|/)test/''',
+  '''(^|/)tests/''',
+  '''(^|/)__tests__/''',
+  '''(^|/)fixtures/''',
+  '''(^|/)mocks/''',
+  # Documentation showing examples — not real secrets
+  '''.md$''',
+  '''.txt$''',
+]
+regexes     = [
+  # Placeholder values
+  '''<your.+here>''',
+  '''REPLACE_ME''',
+  '''changeme''',
+  '''example\.com''',
+  # Test credentials documented in README as obviously fake
+  '''test@example\.com''',
+]
+stopwords   = [
+  "example",
+  "placeholder",
+  "changeme",
+  "your-secret-here",
+  "REPLACE_ME",
+]
